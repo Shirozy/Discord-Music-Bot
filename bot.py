@@ -13,72 +13,98 @@ last_played_song = None
 
 @bot.tree.command(name="join", description="Make the bot join your voice channel.")
 async def join(interaction: discord.Interaction):
-    if not interaction.user.voice:
-        await interaction.response.send_message("You need to join a voice channel first!")
-        return
-
-    channel = interaction.user.voice.channel
     try:
+        await interaction.response.send_message("🌟 I'm thinking... Let me check if you're in a voice channel! 🌟", ephemeral=True)
+
+        if not interaction.user.voice:
+            await interaction.followup.send("💔 Oops! You need to join a voice channel first! 💔", ephemeral=True)
+            return
+
+        channel = interaction.user.voice.channel
         await channel.connect()
-        await interaction.response.send_message(f"Joined {channel.name}!")
+        await interaction.followup.send(embed=discord.Embed(
+            title="Joined Channel!",
+            description=f"🎧 Now I'm here in {channel.name}! Let's make some music! 🎶",
+            color=discord.Color.green()
+        ))
+
     except discord.errors.ClientException as e:
-        await interaction.response.send_message(f"Failed to join the voice channel: {str(e)}")
+        await interaction.followup.send(f"😢 Failed to join the voice channel: {str(e)}", ephemeral=True)
 
 @bot.tree.command(name="play", description="Play a song from YouTube in a voice channel.")
 async def play(interaction: discord.Interaction, song: str):
-    """Plays a song from YouTube in a voice channel."""
-    
-    await interaction.response.defer()
+    try:
+        await interaction.response.defer()  # Defer the response
 
-    if not interaction.user.voice:
-        await interaction.followup.send("You need to join a voice channel first!")
-        return
-
-    channel = interaction.user.voice.channel
-    voice_client = interaction.guild.voice_client
-
-    if voice_client:
-        if voice_client.channel != channel:
-            await voice_client.move_to(channel)
-    else:
-        voice_client = await channel.connect()
-
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'quiet': True,
-        'extractaudio': True,
-        'audioquality': 1,
-        'outtmpl': 'downloads/%(id)s.%(ext)s',
-    }
-
-    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-        try:
-            info = ydl.extract_info(f"ytsearch:{song}", download=False)
-            url2 = info['entries'][0]['url']
-            song_name = info['entries'][0]['title']
-        except Exception as e:
-            await interaction.followup.send(f"Could not find the song: {e}")
+        if not interaction.user.voice:
+            await interaction.followup.send("💔 You need to join a voice channel first! 💔", ephemeral=True)
             return
 
-    queue.append((song_name, url2))
-    
-    if not voice_client.is_playing():
-        await play_next(voice_client, interaction)
+        channel = interaction.user.voice.channel
+        voice_client = interaction.guild.voice_client
 
-    await interaction.followup.send(f"Added to queue: {song_name}")
+        if voice_client:
+            if voice_client.channel != channel:
+                await voice_client.move_to(channel)
+        else:
+            voice_client = await channel.connect()
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'extractaudio': True,
+            'audioquality': 1,
+            'outtmpl': 'downloads/%(id)s.%(ext)s',
+        }
+
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(f"ytsearch:{song}", download=False)
+                url2 = info['entries'][0]['url']
+                song_name = info['entries'][0]['title']
+            except Exception as e:
+                await interaction.followup.send(f"💥 Oops! Couldn't find that song: {str(e)} 💥", ephemeral=True)
+                return
+
+        queue.append((song_name, url2))
+
+        if not voice_client.is_playing():
+            await play_next(voice_client, interaction)
+
+        await interaction.followup.send(embed=discord.Embed(
+            title="🎉 Added to Queue!",
+            description=f"✅ **{song_name}** has been added to the queue! 🎶",
+            color=discord.Color.blue()
+        ))
+
+    except Exception as e:
+        await interaction.followup.send(f"💥 Something went wrong while trying to play the song: {str(e)} 💥", ephemeral=True)
 
 async def play_next(voice_client, interaction):
-    """Plays the next song in the queue."""
-    if queue:
-        song_name, url = queue.pop(0)
-        voice_client.play(discord.FFmpegPCMAudio(url), after=lambda e: on_song_end(e, voice_client, interaction))
-        await interaction.channel.send(f"Now playing: {song_name}")  # Send the song name
+    try:
+        if queue:
+            song_name, url = queue.pop(0)
+            voice_client.play(discord.FFmpegPCMAudio(url), after=lambda e: on_song_end(e, voice_client, interaction))
+            await interaction.channel.send(embed=discord.Embed(
+                title="🎧 Now Playing!",
+                description=f"🎶 **{song_name}** is now playing! Enjoy! 🎤",
+                color=discord.Color.green()
+            ))
 
-        global last_played_song
-        last_played_song = (song_name, url)
+            global last_played_song
+            last_played_song = (song_name, url)
+        else:
+            await interaction.channel.send("🎉 No more songs in the queue, the party's over! 🎉")
+            if voice_client.is_playing():
+                voice_client.stop()
+
+    except Exception as e:
+        print(f"Error playing song: {e}")
+        await interaction.channel.send("💥 Something went wrong while playing the song! 😔", embed=discord.Embed(color=discord.Color.red()))
+        if queue:
+            await play_next(voice_client, interaction)
 
 def on_song_end(error, voice_client, interaction):
-    """Handles the end of a song."""
     if error:
         print(f"Error: {error}")
     if queue:
@@ -90,65 +116,87 @@ def on_song_end(error, voice_client, interaction):
 
 @bot.tree.command(name="stop", description="Stop the music and leave the voice channel.")
 async def stop(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
-        await interaction.guild.voice_client.disconnect()
-        queue.clear()
-        await interaction.response.send_message("Disconnected and stopped the music.")
-    else:
-        await interaction.response.send_message("I'm not connected to a voice channel.")
-
-@bot.tree.command(name="pause", description="Pause the current song.")
-async def pause(interaction: discord.Interaction):
-    voice_client = interaction.guild.voice_client
-    if voice_client and voice_client.is_playing():
-        voice_client.pause()
-        await interaction.response.send_message("The song has been paused.")
-    else:
-        await interaction.response.send_message("No song is currently playing.")
-
-@bot.tree.command(name="resume", description="Resume the paused song.")
-async def resume(interaction: discord.Interaction):
-    voice_client = interaction.guild.voice_client
-    if voice_client and voice_client.is_paused():
-        voice_client.resume()
-        await interaction.response.send_message("The song has been resumed.")
-    else:
-        await interaction.response.send_message("No song is currently paused.")
-
-@bot.tree.command(name="queue", description="Shows the current song queue.")
-async def queue_list(interaction: discord.Interaction):
-    if queue:
-        queue_str = "\n".join([f"{i+1}. {song_name}" for i, (song_name, _) in enumerate(queue)])
-        await interaction.response.send_message(f"Current queue:\n{queue_str}")
-    else:
-        await interaction.response.send_message("The queue is empty.")
+    try:
+        if interaction.guild.voice_client:
+            await interaction.guild.voice_client.disconnect()
+            queue.clear()
+            await interaction.response.send_message(embed=discord.Embed(
+                title="❌ Music Stopped!",
+                description="The music has been stopped, and I’m leaving the voice channel. Goodbye! 👋",
+                color=discord.Color.red()
+            ))
+        else:
+            await interaction.response.send_message("😞 I'm not connected to a voice channel to stop music. 😞", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"💥 Something went wrong while stopping: {str(e)} 💥", ephemeral=True)
 
 @bot.tree.command(name="skip", description="Skip to the next song in the queue.")
 async def skip(interaction: discord.Interaction):
-    voice_client = interaction.guild.voice_client
-    if voice_client and voice_client.is_playing():
-        voice_client.stop()  # Stop the current song
-        await interaction.response.send_message("Song skipped.")
-        if queue:
-            await play_next(voice_client, interaction)
+    try:
+        voice_client = interaction.guild.voice_client
+        if voice_client and voice_client.is_playing():
+            voice_client.stop()  # Stop the current song
+            await interaction.response.send_message("⏭️ Song skipped! Moving on to the next one! 🎶")
+            if queue:
+                await play_next(voice_client, interaction)
+            else:
+                await interaction.followup.send("🎉 No more songs in the queue, the party's over! 🎉")
         else:
-            await interaction.response.send_message("No more songs in the queue.")
-    else:
-        await interaction.response.send_message("No song is currently playing.")
+            await interaction.response.send_message("😞 No song is currently playing to skip. 😞", ephemeral=True)
 
-@bot.tree.command(name="loop", description="Loop the last played song.")
-async def loop(interaction: discord.Interaction):
-    if last_played_song:
-        song_name, url = last_played_song
-        queue.append((song_name, url))  # Add the last song back to the queue
-        await interaction.response.send_message(f"Looping: {song_name}")
-    else:
-        await interaction.response.send_message("No song has been played yet to loop.")
+    except Exception as e:
+        await interaction.response.send_message(f"💥 Something went wrong while skipping the song: {str(e)} 💥", ephemeral=True)
 
-@bot.tree.command(name="delqueue", description="Delete the entire song queue.")
-async def delqueue(interaction: discord.Interaction):
-    queue.clear()
-    await interaction.response.send_message("The song queue has been cleared.")
+@bot.tree.command(name="pause", description="Pause the current song.")
+async def pause(interaction: discord.Interaction):
+    try:
+        voice_client = interaction.guild.voice_client
+        if voice_client and voice_client.is_playing():
+            voice_client.pause()
+            await interaction.response.send_message(embed=discord.Embed(
+                title="⏸️ Music Paused",
+                description="The song has been paused! You can resume it later. 🎶",
+                color=discord.Color.orange()
+            ))
+        else:
+            await interaction.response.send_message("😞 No song is currently playing to pause. 😞", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"💥 Something went wrong while pausing the song: {str(e)} 💥", ephemeral=True)
+
+@bot.tree.command(name="resume", description="Resume the paused song.")
+async def resume(interaction: discord.Interaction):
+    try:
+        voice_client = interaction.guild.voice_client
+        if voice_client and voice_client.is_paused():
+            voice_client.resume()
+            await interaction.response.send_message(embed=discord.Embed(
+                title="▶️ Music Resumed!",
+                description="I’m back! The song is playing again! 🎶",
+                color=discord.Color.green()
+            ))
+        else:
+            await interaction.response.send_message("😞 No song is currently paused to resume. 😞", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"💥 Something went wrong while resuming the song: {str(e)} 💥", ephemeral=True)
+
+@bot.tree.command(name="queue", description="Shows the current song queue.")
+async def queue_list(interaction: discord.Interaction):
+    try:
+        if queue:
+            queue_str = "\n".join([f"{i+1}. {song_name}" for i, (song_name, _) in enumerate(queue)])
+            await interaction.response.send_message(embed=discord.Embed(
+                title="📋 Current Queue",
+                description=f"Here’s the current song queue:\n{queue_str}",
+                color=discord.Color.blue()
+            ))
+        else:
+            await interaction.response.send_message(embed=discord.Embed(
+                title="Queue is Empty",
+                description="The queue is currently empty! Add some songs to it! 🎶",
+                color=discord.Color.red()
+            ))
+    except Exception as e:
+        await interaction.response.send_message(f"💥 Something went wrong while checking the queue: {str(e)} 💥", ephemeral=True)
 
 @bot.event
 async def on_ready():
