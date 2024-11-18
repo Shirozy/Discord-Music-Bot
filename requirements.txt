@@ -4,3 +4,4 @@ discord.py==2.4.0
 youtube-dl==2021.12.17
 yt-dlp==2024.11.18
 python-dotenv==1.0.1
+ffmpeg-python==0.2.0
